@@ -1,0 +1,7 @@
+/claude-session-guard
+*.test
+*.out
+.DS_Store
+config.env
+state/
+events.log
