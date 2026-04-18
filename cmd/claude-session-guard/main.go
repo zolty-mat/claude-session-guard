@@ -72,7 +72,7 @@ func init() {
 
 func logMsg(format string, args ...any) {
 	_ = os.MkdirAll(filepath.Dir(logFile), 0o755)
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -105,6 +105,9 @@ func loadConfig() map[string]string {
 		if v := os.Getenv(k); v != "" {
 			out[k] = v
 		}
+	}
+	if info, statErr := os.Stat(configFile); statErr == nil && info.Mode().Perm()&0o044 != 0 {
+		logMsg("WARNING: %s has permissions %o — run: chmod 600 %s", configFile, info.Mode().Perm(), configFile)
 	}
 	return out
 }
@@ -287,7 +290,7 @@ func saveState(s *State) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, final)
@@ -812,6 +815,12 @@ func handleBgPost() {
 	var err error
 	if len(os.Args) > 2 {
 		fname := os.Args[2]
+		// Reject paths outside the system temp dir — bg-post is an internal
+		// subcommand and should only ever receive paths we created in os.TempDir().
+		if !strings.HasPrefix(filepath.Clean(fname), filepath.Clean(os.TempDir())) {
+			logMsg("bg-post: rejected non-temp path: %s", filepath.Base(fname))
+			return
+		}
 		data, err = os.ReadFile(fname)
 		_ = os.Remove(fname)
 	} else {

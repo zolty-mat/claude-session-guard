@@ -133,6 +133,65 @@ State files are atomically written via `os.Rename()`. The binary re-invokes itse
 - `MCP` server exposing active sessions as a resource so one Claude can "see" what the others are doing.
 - Richer conflict policies: block instead of warn for specific paths, or prompt-for-confirmation patterns.
 
+## Let Claude set this up for you
+
+Paste the following prompt into any Claude Code session and it will install `claude-session-guard`, wire the hooks, and optionally configure Slack — no manual steps required.
+
+```
+Set up claude-session-guard on this machine:
+
+1. Clone https://github.com/zolty-mat/claude-session-guard to a temp dir,
+   build with `make install` (installs binary to ~/.local/bin/), and confirm
+   the binary is on PATH.
+
+2. Open ~/.claude/settings.json (create if missing). Merge in the following
+   hooks block — do NOT overwrite any existing hooks, merge carefully:
+     SessionStart  → command: "claude-session-guard start"
+     SessionEnd    → command: "claude-session-guard stop"
+     PreToolUse matcher "Edit|Write|NotebookEdit" → command: "claude-session-guard pre-edit"
+
+3. Run `claude-session-guard status` to confirm the binary works.
+
+4. If I provide a SLACK_BOT_TOKEN and SLACK_CHANNEL_ID, write them to
+   ~/.local/share/claude-session-guard/config.env with mode 0600,
+   then run `claude-session-guard test` to verify Slack connectivity.
+   If I don't provide tokens, skip this step — local-only mode is fine.
+
+5. Report: binary path, settings.json hooks section (show me the merged
+   result), and whether the status command returned cleanly.
+```
+
+## claude-session-guard as a Claude Code skill
+
+If you use Claude Code skills (`.claude/skills/`), add this file as `claude-session-guard/SKILL.md` in your project to give Claude persistent context about the guard:
+
+```markdown
+# claude-session-guard
+
+Parallel session coordinator. Binary at `~/.local/bin/claude-session-guard`.
+State: `~/.local/share/claude-session-guard/state/`.
+
+## Key commands
+- `claude-session-guard status` — show all active sessions with edit counts
+- `claude-session-guard claim "<intent>"` — post a manual intent marker to this session's Slack thread
+- `claude-session-guard release <file>` — drop a recorded file claim
+- `claude-session-guard gc` — reap sessions idle >24h
+- `claude-session-guard test` — smoke-test Slack connectivity
+
+## When to use
+- Before starting work that might overlap with another session: run `status`
+- When you see a ⚠️ CONCURRENCY WARNING in context: pause, check `status`, coordinate before editing
+- After completing a major task: optionally run `claim "done with X"` so other sessions see the intent
+
+## Conflict warnings
+When pre-edit fires a conflict, you will see this in your context:
+> ⚠️ CONCURRENCY WARNING: N other Claude session(s) recently claimed `<file>`:
+> - `<session-id>` in `<repo>` claimed this Nm ago
+
+Default response: surface the conflict to the user and ask before proceeding.
+Only override if the user explicitly instructs you to proceed anyway.
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
