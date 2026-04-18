@@ -846,6 +846,128 @@ func handleBgPost() {
 	}
 }
 
+// ─── MCP server ────────────────────────────────────────────────────────────
+//
+// Minimal JSON-RPC 2.0 MCP server over stdio. Exposes one tool:
+//   list_sessions — returns the current state of all active sessions.
+//
+// Wire into .mcp.json:
+//   {"mcpServers": {"claude-session-guard": {"command": "claude-session-guard", "args": ["mcp"]}}}
+//
+// Claude can then call list_sessions to see what other sessions are editing.
+
+type mcpRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      any             `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type mcpResponse struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      any    `json:"id,omitempty"`
+	Result  any    `json:"result,omitempty"`
+	Error   any    `json:"error,omitempty"`
+}
+
+func mcpSend(enc *json.Encoder, resp mcpResponse) {
+	_ = enc.Encode(resp)
+}
+
+func handleMCPServer() {
+	dec := json.NewDecoder(os.Stdin)
+	enc := json.NewEncoder(os.Stdout)
+
+	for {
+		var req mcpRequest
+		if err := dec.Decode(&req); err != nil {
+			return
+		}
+
+		switch req.Method {
+		case "initialize":
+			mcpSend(enc, mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: map[string]any{
+					"protocolVersion": "2024-11-05",
+					"serverInfo":      map[string]any{"name": "claude-session-guard", "version": "1.0.0"},
+					"capabilities":    map[string]any{"tools": map[string]any{}},
+				},
+			})
+
+		case "notifications/initialized":
+			// no response for notifications
+
+		case "tools/list":
+			mcpSend(enc, mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: map[string]any{
+					"tools": []map[string]any{{
+						"name":        "list_sessions",
+						"description": "List all active claude-session-guard sessions on this machine. Shows which repos, branches, and files each session is editing. Use this to coordinate with other parallel Claude Code sessions before editing shared files.",
+						"inputSchema": map[string]any{
+							"type":       "object",
+							"properties": map[string]any{},
+						},
+					}},
+				},
+			})
+
+		case "tools/call":
+			sessions := allStates()
+			if len(sessions) == 0 {
+				mcpSend(enc, mcpResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Result: map[string]any{
+						"content": []map[string]any{{"type": "text", "text": "No active Claude Code sessions on this machine."}},
+					},
+				})
+				continue
+			}
+
+			sort.Slice(sessions, func(i, j int) bool { return sessions[i].StartedAt < sessions[j].StartedAt })
+
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("%d active Claude Code session(s) on this machine:\n\n", len(sessions)))
+			for i, s := range sessions {
+				sb.WriteString(fmt.Sprintf("Session %d: %s\n", i+1, s.SessionShort))
+				sb.WriteString(fmt.Sprintf("  repo:    %s\n", s.Repo))
+				sb.WriteString(fmt.Sprintf("  branch:  %s\n", s.Branch))
+				sb.WriteString(fmt.Sprintf("  cwd:     %s\n", s.CWD))
+				sb.WriteString(fmt.Sprintf("  host:    %s\n", s.Host))
+				sb.WriteString(fmt.Sprintf("  started: %s\n", s.StartedAt))
+				sb.WriteString(fmt.Sprintf("  edits:   %d\n", s.EditCount))
+				if len(s.Claims) > 0 {
+					recent := s.Claims[len(s.Claims)-1]
+					sb.WriteString(fmt.Sprintf("  last file: %s (at %s)\n", recent.File, recent.At))
+				}
+				sb.WriteString("\n")
+			}
+			sb.WriteString("Check these sessions before editing shared files to avoid conflicts.")
+
+			mcpSend(enc, mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: map[string]any{
+					"content": []map[string]any{{"type": "text", "text": sb.String()}},
+				},
+			})
+
+		default:
+			if req.ID != nil {
+				mcpSend(enc, mcpResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Error:   map[string]any{"code": -32601, "message": "method not found"},
+				})
+			}
+		}
+	}
+}
+
 // ─── entrypoint ────────────────────────────────────────────────────────────
 
 func usage() {
@@ -865,6 +987,7 @@ Operator commands:
 
 Internal:
   bg-post    background worker (do not invoke directly)
+  mcp        MCP server (stdio JSON-RPC) — wire into .mcp.json to let Claude query sessions
 
 Config precedence: environment > $CLAUDE_SESSION_GUARD_CONFIG file > default config.env
 Data dir default: $XDG_DATA_HOME/claude-session-guard (override with $CLAUDE_SESSION_GUARD_HOME)`)
@@ -901,6 +1024,8 @@ func main() {
 		handleTest()
 	case "bg-post":
 		handleBgPost()
+	case "mcp":
+		handleMCPServer()
 	case "-h", "--help", "help":
 		usage()
 	default:

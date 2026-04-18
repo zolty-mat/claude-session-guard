@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          BINARY=claude-session-guard-${{ matrix.goos }}-${{ matrix.goarch }}
+          go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -o "$BINARY" ./cmd/claude-session-guard
+          sha256sum "$BINARY" > "$BINARY.sha256"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            claude-session-guard-${{ matrix.goos }}-${{ matrix.goarch }}
+            claude-session-guard-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+          generate_release_notes: true

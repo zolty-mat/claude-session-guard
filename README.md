@@ -55,7 +55,7 @@ Start a new Claude Code session. Run `claude-session-guard status` in a terminal
 
 Without a token, the guard runs local-only. The LLM still gets the `additionalContext` conflict warnings — you just don't get the timeline thread.
 
-1. Create a Slack app at https://api.slack.com/apps → "From scratch."
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) → "From scratch."
 2. Add bot token scopes: `chat:write`, `reactions:write`.
 3. Install to your workspace. Grab the `xoxb-...` bot token.
 4. Invite the bot to a channel (e.g. `/invite @claude-sessions` in `#claude-sessions`).
@@ -85,7 +85,7 @@ Every `pre-edit` hook:
 The LLM gets a message like:
 
 > ⚠️ CONCURRENCY WARNING: 1 other Claude session(s) recently claimed `src/auth.ts`:
-> - `a1b2c3d4` in `backend-api` (cwd `/Users/me/code/backend-api`) claimed this 3m ago
+> `a1b2c3d4` in `backend-api` (cwd `/Users/me/code/backend-api`) claimed this 3m ago
 >
 > Consider pausing and coordinating before editing to avoid clobbering their work.
 
@@ -93,7 +93,7 @@ In practice Claude almost always pauses and surfaces the conflict. It's advisory
 
 ## CLI
 
-```
+```text
 claude-session-guard status            # show active sessions
 claude-session-guard claim "intent"    # post a manual claim line
 claude-session-guard release <file>    # drop a recorded claim
@@ -107,7 +107,7 @@ Default: `$XDG_DATA_HOME/claude-session-guard/` (i.e. `~/.local/share/claude-ses
 
 Override with `CLAUDE_SESSION_GUARD_HOME=/some/path`.
 
-```
+```text
 config.env              # SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
 events.log              # append-only operational log
 state/<session_id>.json # one per live session, GC'd at 24h idle
@@ -127,17 +127,59 @@ State files are atomically written via `os.Rename()`. The binary re-invokes itse
 - Single machine. Multi-machine coordination would need a shared backend — see [notes below](#future-ideas).
 - Slack free tier has a workspace message cap; on busy days you may hit it. The guard throttles to one post per file per 60s to mitigate.
 
+## MCP server — ask Claude what the other sessions are doing
+
+The binary ships a minimal MCP server. Wire it up and any Claude Code session can call `list_sessions` to see every other active session's current repo, branch, and last edited file — before it touches anything.
+
+Add to your `~/.claude/mcp.json` (or project `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "claude-session-guard": {
+      "command": "claude-session-guard",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Claude can then use the `list_sessions` tool. Example interaction:
+
+**Claude:** I'll check what other sessions are doing before editing this file. `list_sessions →`
+
+```text
+2 active Claude Code session(s) on this machine:
+
+Session 1: a1b2c3d4
+  repo:    backend-api
+  branch:  feat/auth-refactor
+  cwd:     /Users/me/code/backend-api
+  edits:   23
+  last file: src/auth.ts (at 2026-04-18T14:32:01-04:00)
+
+Session 2: ef901234
+  repo:    backend-api
+  branch:  feat/auth-refactor
+  cwd:     /Users/me/code/backend-api
+  edits:   7
+  last file: tests/auth.test.ts (at 2026-04-18T14:31:44-04:00)
+```
+
+**Claude:** Another session is actively editing `src/auth.ts`. I'll check with you before making changes there.
+
+The MCP server speaks JSON-RPC 2.0 over stdio — no network ports, no daemons.
+
 ## Future ideas
 
 - Central Postgres sync so sessions on different laptops see each other (a SQLite-first, cluster-synced design is in progress — PRs welcome).
-- `MCP` server exposing active sessions as a resource so one Claude can "see" what the others are doing.
 - Richer conflict policies: block instead of warn for specific paths, or prompt-for-confirmation patterns.
 
 ## Let Claude set this up for you
 
 Paste the following prompt into any Claude Code session and it will install `claude-session-guard`, wire the hooks, and optionally configure Slack — no manual steps required.
 
-```
+```text
 Set up claude-session-guard on this machine:
 
 1. Clone https://github.com/zolty-mat/claude-session-guard to a temp dir,
